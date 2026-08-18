@@ -164,6 +164,22 @@ export default function App() {
   useEffect(() => localStorage.setItem("savedAnime", JSON.stringify(savedAnime)), [savedAnime]);
   useEffect(() => localStorage.setItem("historyAnime", JSON.stringify(historyAnime)), [historyAnime]);
 
+  // Cek Hash URL saat pertama kali muat / refresh (Agar tidak blank jika di-refresh)
+  useEffect(() => {
+    const handleHashChange = async () => {
+      const hash = window.location.hash;
+      if (hash.startsWith("#/detail/")) {
+        const slug = hash.replace("#/detail/", "");
+        if (slug) fetchDetailData(slug);
+      } else if (hash.startsWith("#/episode/")) {
+        const slug = hash.replace("#/episode/", "");
+        if (slug) fetchEpisodeData(slug);
+      }
+    };
+
+    handleHashChange();
+  }, []);
+
   useEffect(() => {
     getPopularAnime(1).then((res) => {
       const list = findArrayInObject(res.data);
@@ -202,7 +218,7 @@ export default function App() {
           return;
         }
 
-        if (res) {
+        if (res && res.data) {
           setAnimeList(findArrayInObject(res.data));
         }
       } catch (err) {
@@ -221,9 +237,12 @@ export default function App() {
     setLoading(true);
     setActiveDetail(null);
     setActiveEpisode(null);
+    window.location.hash = "";
     try {
       const res = await searchAnime(searchQuery);
-      setAnimeList(findArrayInObject(res.data));
+      if (res && res.data) {
+        setAnimeList(findArrayInObject(res.data));
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -231,35 +250,58 @@ export default function App() {
     }
   };
 
-  const handleSelectAnime = async (item) => {
-    const slug = extractSlug(item);
-    if (!slug) return;
-
+  const fetchDetailData = async (slug) => {
     setLoading(true);
     try {
       const res = await getAnimeDetail(slug);
-      setActiveDetail(res.data?.data || res.data);
-      setHistoryAnime((prev) => [item, ...prev.filter((i) => extractSlug(i) !== slug)]);
+      const data = res.data?.data || res.data;
+      if (data) {
+        setActiveDetail(data);
+        setActiveEpisode(null);
+        window.location.hash = `#/detail/${slug}`;
+        setHistoryAnime((prev) => [data, ...prev.filter((i) => extractSlug(i) !== slug)]);
+      }
     } catch (err) {
       console.error("Detail Error:", err);
+      alert("Gagal memuat detail anime.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSelectEpisode = async (ep) => {
-    const slug = extractSlug(ep);
-    if (!slug) return;
-
+  const fetchEpisodeData = async (slug) => {
     setLoading(true);
     try {
       const res = await getEpisodeDetail(slug);
-      setActiveEpisode(res.data?.data || res.data);
+      const data = res.data?.data || res.data;
+      if (data) {
+        setActiveEpisode(data);
+        window.location.hash = `#/episode/${slug}`;
+      } else {
+        alert("Pilihan episode tidak tersedia.");
+      }
     } catch (err) {
       console.error("Episode Error:", err);
+      alert("Terjadi kesalahan koneksi saat memuat video.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSelectAnime = (item) => {
+    const slug = extractSlug(item);
+    if (slug) fetchDetailData(slug);
+  };
+
+  const handleSelectEpisode = (ep) => {
+    const slug = extractSlug(ep);
+    if (slug) fetchEpisodeData(slug);
+  };
+
+  const resetState = () => {
+    setActiveDetail(null);
+    setActiveEpisode(null);
+    window.location.hash = "";
   };
 
   const toggleSaveAnime = (anime) => {
@@ -280,11 +322,11 @@ export default function App() {
         
         {/* Logo Bulat & Title */}
         <div 
-          onClick={() => { setActiveDetail(null); setActiveEpisode(null); setActiveTab("home"); setCategoryMenu(""); }}
+          onClick={() => { resetState(); setActiveTab("home"); setCategoryMenu(""); }}
           className="flex items-center gap-3 cursor-pointer mx-auto"
         >
           <img 
-            src="https://files.catbox.moe/zh57ll.jpg" 
+            src="https://kommodo.ai/i/pIaYotguSt1N01jfL2S6" 
             alt="Logo" 
             className="w-9 h-9 rounded-full object-cover border border-purple-500/50 shadow-lg shadow-purple-500/20"
           />
@@ -319,8 +361,7 @@ export default function App() {
                       key={item.id}
                       onClick={() => {
                         setCategoryMenu(item.id);
-                        setActiveDetail(null);
-                        setActiveEpisode(null);
+                        resetState();
                         setIsMenuOpen(false);
                       }}
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all ${
@@ -370,7 +411,7 @@ export default function App() {
 
               <div className="w-16 h-16 mx-auto rounded-full overflow-hidden border-2 border-purple-500/50 shadow-lg shadow-purple-500/30">
                 <img 
-                  src="https://files.catbox.moe/zh57ll.jpg" 
+                  src="https://kommodo.ai/i/pIaYotguSt1N01jfL2S6" 
                   alt="Developer Logo" 
                   className="w-full h-full object-cover"
                 />
@@ -392,7 +433,7 @@ export default function App() {
               </a>
 
               <p className="text-xs text-slate-400 leading-relaxed px-2">
-                Website ini dibuat menggunakan bahasa pemrograman <strong>React.js</strong> dan <strong>Tailwind</strong> dan juga menggunakan API dari <strong>Sanka Vollerei</strong>.
+                Website ini di buat menggunakan bahasa pemrograman <strong>React.js</strong> dan <strong>Tailwind</strong> dan juga menggunakan api dari <strong>Sanka Vollerei</strong>
               </p>
 
               <div className="pt-2 border-t border-liquid-border text-[11px] text-slate-500 font-medium">
@@ -461,7 +502,14 @@ export default function App() {
         ) : activeEpisode ? (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
             <button
-              onClick={() => setActiveEpisode(null)}
+              onClick={() => {
+                const animeSlug = extractSlug(activeDetail) || extractSlug(activeEpisode);
+                if (animeSlug) {
+                  fetchDetailData(animeSlug);
+                } else {
+                  resetState();
+                }
+              }}
               className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300"
             >
               <ArrowLeft className="w-4 h-4" /> Kembali ke Detail
@@ -491,7 +539,7 @@ export default function App() {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
             <div className="flex items-center justify-between">
               <button
-                onClick={() => setActiveDetail(null)}
+                onClick={resetState}
                 className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300"
               >
                 <ArrowLeft className="w-4 h-4" /> Kembali
@@ -653,8 +701,7 @@ export default function App() {
               onClick={() => {
                 setActiveTab(tab.id);
                 setCategoryMenu("");
-                setActiveDetail(null);
-                setActiveEpisode(null);
+                resetState();
               }}
               className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${
                 isActive ? "text-purple-400 scale-110" : "text-slate-400 hover:text-slate-200"
