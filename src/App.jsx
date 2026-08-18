@@ -326,7 +326,7 @@ export default function App() {
           className="flex items-center gap-3 cursor-pointer mx-auto"
         >
           <img 
-            src="https://kommodo.ai/i/pIaYotguSt1N01jfL2S6" 
+            src="https://files.catbox.moe/zh57ll.jpg" 
             alt="Logo" 
             className="w-9 h-9 rounded-full object-cover border border-purple-500/50 shadow-lg shadow-purple-500/20"
           />
@@ -411,7 +411,7 @@ export default function App() {
 
               <div className="w-16 h-16 mx-auto rounded-full overflow-hidden border-2 border-purple-500/50 shadow-lg shadow-purple-500/30">
                 <img 
-                  src="https://kommodo.ai/i/pIaYotguSt1N01jfL2S6" 
+                  src="https://files.catbox.moe/zh57ll.jpg" 
                   alt="Developer Logo" 
                   className="w-full h-full object-cover"
                 />
