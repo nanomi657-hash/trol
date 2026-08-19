@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { auth, loginWithGoogle, logoutUser, onAuthStateChanged } from "./firebase";
 import {
   MoreVertical,
   Home,
@@ -14,10 +15,13 @@ import {
   Flame,
   Tv,
   Film,
-  Calendar,
   Info,
   X,
-  MessageSquare
+  MessageSquare,
+  User,
+  LogOut,
+  Save,
+  Camera
 } from "lucide-react";
 import {
   getHomeAnime,
@@ -29,7 +33,6 @@ import {
   getAnimeDetail,
   getEpisodeDetail,
 } from "./api/anime";
-import axios from "axios";
 
 // --- Helpers Rekursif ---
 const findArrayInObject = (obj) => {
@@ -37,7 +40,7 @@ const findArrayInObject = (obj) => {
   if (Array.isArray(obj)) return obj;
   if (typeof obj !== "object") return [];
 
-  const priorityKeys = ["data", "result", "anime", "items", "list", "episodes", "episode_list", "genres", "schedule"];
+  const priorityKeys = ["data", "result", "anime", "items", "list", "episodes", "episode_list", "genres"];
   for (const key of priorityKeys) {
     if (Array.isArray(obj[key]) && obj[key].length > 0) return obj[key];
   }
@@ -57,7 +60,7 @@ const extractImage = (item) => {
   if (!item || typeof item !== "object") return "";
   const keys = ["thumbnail", "image", "thumb", "cover", "poster", "img", "src"];
   for (const key of keys) {
-    if (item[key] && typeof item[key] === "string" && item[key].startsWith("http")) return item[key];
+    if (item[key] && typeof item[key] === "string" && (item[key].startsWith("http") || item[key].startsWith("data:image"))) return item[key];
   }
   for (const key in item) {
     if (typeof item[key] === "object" && item[key] !== null) {
@@ -95,7 +98,7 @@ const extractString = (item, keys) => {
 };
 
 const extractSlug = (item) => {
-  const raw = extractString(item, ["slug", "endpoint", "link", "url", "id"]);
+  const raw = extractString(item, ["slug", "endpoint", "link", "url", "id", "genre_name"]);
   if (!raw) return "";
   return raw
     .replace(/^https?:\/\/[^\/]+/, "")
@@ -134,7 +137,7 @@ const LiquidStreamTitle = () => {
             visible: { opacity: 1, y: 0, scale: 1 },
           }}
           className={`text-xl sm:text-2xl font-extrabold tracking-wider ${
-            char === " " ? "mr-2" : "bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 drop-shadow-[0_0_12px_rgba(168,85,247,0.4)]"
+            char === " " ? "mr-2" : "text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]"
           }`}
         >
           {char}
@@ -144,12 +147,75 @@ const LiquidStreamTitle = () => {
   );
 };
 
+// --- WRAPPER UTAMA DENGAN AUTENTIKASI ---
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoadingAuth(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  if (loadingAuth) {
+    return (
+      <div className="h-screen bg-black flex flex-col items-center justify-center text-white">
+        <Loader2 className="w-10 h-10 animate-spin text-white mb-3" />
+        <p className="text-xs text-neutral-400">Memuat Liquid Stream...</p>
+      </div>
+    );
+  }
+
+  return user ? <MainApp user={user} /> : <LoginScreen />;
+}
+
+// --- TAMPILAN HALAMAN LOGIN ---
+function LoginScreen() {
+  return (
+    <div className="h-screen bg-black flex flex-col items-center justify-center p-6 text-white text-center">
+      <img
+        src="https://files.catbox.moe/zh57ll.jpg"
+        alt="Logo Website"
+        className="w-24 h-24 rounded-full mb-6 border border-neutral-800 shadow-xl"
+      />
+      <h1 className="text-3xl font-extrabold mb-2 tracking-tight">LIQUID STREAM</h1>
+      <p className="text-neutral-400 text-sm mb-8 max-w-xs">
+        Silakan login terlebih dahulu untuk mengakses ribuan koleksi anime.
+      </p>
+      <button
+        onClick={loginWithGoogle}
+        className="px-8 py-3.5 bg-white text-black font-bold text-sm rounded-full hover:bg-neutral-200 transition-all active:scale-95 shadow-lg"
+      >
+        Login dengan Google
+      </button>
+    </div>
+  );
+}
+
+// --- TAMPILAN UTAMA APLIKASI ANIME ---
+function MainApp({ user }) {
   const [activeTab, setActiveTab] = useState("home");
   const [categoryMenu, setCategoryMenu] = useState("");
   const [selectedGenre, setSelectedGenre] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+
+  // Logo Website Permanen
+  const LOGO_WEB = "https://files.catbox.moe/zh57ll.jpg";
+
+  // Profil User khusus (Tersimpan terpisah)
+  const [profile, setProfile] = useState(() => {
+    const saved = localStorage.getItem("user_profile");
+    return saved ? JSON.parse(saved) : {
+      name: user.displayName || "User",
+      bio: "Anime Streamer",
+      photo: user.photoURL || LOGO_WEB
+    };
+  });
 
   const [animeList, setAnimeList] = useState([]);
   const [heroAnimeList, setHeroAnimeList] = useState([]);
@@ -164,24 +230,9 @@ export default function App() {
   const [activeDetail, setActiveDetail] = useState(null);
   const [activeEpisode, setActiveEpisode] = useState(null);
 
+  useEffect(() => localStorage.setItem("user_profile", JSON.stringify(profile)), [profile]);
   useEffect(() => localStorage.setItem("savedAnime", JSON.stringify(savedAnime)), [savedAnime]);
   useEffect(() => localStorage.setItem("historyAnime", JSON.stringify(historyAnime)), [historyAnime]);
-
-  // Cek Hash URL saat pertama kali muat / refresh
-  useEffect(() => {
-    const handleHashChange = async () => {
-      const hash = window.location.hash;
-      if (hash.startsWith("#/detail/")) {
-        const slug = hash.replace("#/detail/", "");
-        if (slug) fetchDetailData(slug);
-      } else if (hash.startsWith("#/episode/")) {
-        const slug = hash.replace("#/episode/", "");
-        if (slug) fetchEpisodeData(slug);
-      }
-    };
-
-    handleHashChange();
-  }, []);
 
   useEffect(() => {
     getPopularAnime(1).then((res) => {
@@ -198,9 +249,8 @@ export default function App() {
     return () => clearInterval(interval);
   }, [heroAnimeList]);
 
-  // Handle Fetch Data Utama
   useEffect(() => {
-    if (activeDetail || activeEpisode || selectedGenre) return;
+    if (activeDetail || activeEpisode) return;
 
     const fetchData = async () => {
       setLoading(true);
@@ -211,21 +261,18 @@ export default function App() {
             case "popular": res = await getPopularAnime(); break;
             case "ongoing": res = await getOngoingAnime(); break;
             case "movies": res = await getMoviesAnime(); break;
-            case "schedule": 
-              res = await axios.get("https://www.sankavollerei.web.id/anime/animasu/schedule");
-              break;
             default: break;
           }
         } else if (activeTab === "home") {
           res = await getHomeAnime();
-        } else if (activeTab === "genre") {
+        } else if (activeTab === "genre" && !selectedGenre) {
           res = await getGenres();
           setGenresList(findArrayInObject(res.data));
           setLoading(false);
           return;
         }
 
-        if (res && res.data) {
+        if (res) {
           setAnimeList(findArrayInObject(res.data));
         }
       } catch (err) {
@@ -238,23 +285,30 @@ export default function App() {
     fetchData();
   }, [activeTab, categoryMenu, activeDetail, activeEpisode, selectedGenre]);
 
-  // Fetch Anime berdasarkan Genre yang Dipilih
   const handleSelectGenre = async (genreItem) => {
-    const slug = extractSlug(genreItem) || genreItem.name || genreItem.title;
-    if (!slug) return;
-
+    const slug = extractSlug(genreItem);
+    const genreName = extractString(genreItem, ["name", "title", "genre", "genre_name"]) || slug;
+    
+    setSelectedGenre(genreName);
     setLoading(true);
-    setSelectedGenre(genreItem);
     try {
-      const res = await axios.get(`https://www.sankavollerei.web.id/anime/animasu/genre/${slug.toLowerCase()}?page=1`);
-      if (res && res.data) {
-        setAnimeList(findArrayInObject(res.data));
-      }
+      const res = await searchAnime(genreName);
+      setAnimeList(findArrayInObject(res.data));
     } catch (err) {
-      console.error("Genre Error:", err);
-      alert("Gagal memuat anime berdasarkan genre ini.");
+      console.error("Genre Fetch Error:", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfile((prev) => ({ ...prev, photo: reader.result }));
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -264,13 +318,9 @@ export default function App() {
     setLoading(true);
     setActiveDetail(null);
     setActiveEpisode(null);
-    setSelectedGenre(null);
-    window.location.hash = "";
     try {
       const res = await searchAnime(searchQuery);
-      if (res && res.data) {
-        setAnimeList(findArrayInObject(res.data));
-      }
+      setAnimeList(findArrayInObject(res.data));
     } catch (err) {
       console.error(err);
     } finally {
@@ -278,59 +328,35 @@ export default function App() {
     }
   };
 
-  const fetchDetailData = async (slug) => {
+  const handleSelectAnime = async (item) => {
+    const slug = extractSlug(item);
+    if (!slug) return;
+
     setLoading(true);
     try {
       const res = await getAnimeDetail(slug);
-      const data = res.data?.data || res.data;
-      if (data) {
-        setActiveDetail(data);
-        setActiveEpisode(null);
-        window.location.hash = `#/detail/${slug}`;
-        setHistoryAnime((prev) => [data, ...prev.filter((i) => extractSlug(i) !== slug)]);
-      }
+      setActiveDetail(res.data?.data || res.data);
+      setHistoryAnime((prev) => [item, ...prev.filter((i) => extractSlug(i) !== slug)]);
     } catch (err) {
       console.error("Detail Error:", err);
-      alert("Gagal memuat detail anime.");
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchEpisodeData = async (slug) => {
+  const handleSelectEpisode = async (ep) => {
+    const slug = extractSlug(ep);
+    if (!slug) return;
+
     setLoading(true);
     try {
       const res = await getEpisodeDetail(slug);
-      const data = res.data?.data || res.data;
-      if (data) {
-        setActiveEpisode(data);
-        window.location.hash = `#/episode/${slug}`;
-      } else {
-        alert("Pilihan episode tidak tersedia.");
-      }
+      setActiveEpisode(res.data?.data || res.data);
     } catch (err) {
       console.error("Episode Error:", err);
-      alert("Terjadi kesalahan koneksi saat memuat video.");
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSelectAnime = (item) => {
-    const slug = extractSlug(item);
-    if (slug) fetchDetailData(slug);
-  };
-
-  const handleSelectEpisode = (ep) => {
-    const slug = extractSlug(ep);
-    if (slug) fetchEpisodeData(slug);
-  };
-
-  const resetState = () => {
-    setActiveDetail(null);
-    setActiveEpisode(null);
-    setSelectedGenre(null);
-    window.location.hash = "";
   };
 
   const toggleSaveAnime = (anime) => {
@@ -344,20 +370,20 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen liquid-bg text-slate-200 pb-20 relative overflow-x-hidden">
+    <div className="min-h-screen bg-black text-white pb-20 relative overflow-x-hidden">
       
       {/* Top Header */}
-      <header className="sticky top-0 z-40 backdrop-blur-liquid bg-liquid-bg/80 border-b border-liquid-border px-4 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-40 backdrop-blur-md bg-black/80 border-b border-neutral-800 px-4 py-3 flex items-center justify-between">
         
-        {/* Logo Bulat & Title */}
+        {/* Logo Website Tetap Menggunakan LOGO_WEB Permanen */}
         <div 
-          onClick={() => { resetState(); setActiveTab("home"); setCategoryMenu(""); }}
+          onClick={() => { setActiveDetail(null); setActiveEpisode(null); setActiveTab("home"); setCategoryMenu(""); setSelectedGenre(null); }}
           className="flex items-center gap-3 cursor-pointer mx-auto"
         >
           <img 
-            src="https://files.catbox.moe/zh57ll.jpg" 
-            alt="Logo" 
-            className="w-9 h-9 rounded-full object-cover border border-purple-500/50 shadow-lg shadow-purple-500/20"
+            src={LOGO_WEB} 
+            alt="Website Logo" 
+            className="w-9 h-9 rounded-full object-cover border border-neutral-700"
           />
           <LiquidStreamTitle />
         </div>
@@ -366,7 +392,7 @@ export default function App() {
         <div className="relative absolute right-4">
           <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className="p-2 rounded-full hover:bg-white/10 transition-colors text-slate-300"
+            className="p-2 rounded-full hover:bg-neutral-800 transition-colors text-white"
           >
             <MoreVertical className="w-6 h-6" />
           </button>
@@ -375,15 +401,25 @@ export default function App() {
             {isMenuOpen && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.9, y: -10 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
+                animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9, y: -10 }}
-                className="absolute right-0 mt-2 w-48 bg-liquid-bg/95 border border-liquid-border backdrop-blur-xl rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1"
+                className="absolute right-0 mt-2 w-48 bg-neutral-900 border border-neutral-800 backdrop-blur-xl rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1"
               >
+                <button
+                  onClick={() => {
+                    setIsProfileOpen(true);
+                    setIsMenuOpen(false);
+                  }}
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white hover:bg-neutral-800 transition-all border-b border-neutral-800/80 mb-1"
+                >
+                  <User className="w-4 h-4 text-white" />
+                  <span>Profil Saya</span>
+                </button>
+
                 {[
                   { id: "popular", label: "Popular", icon: Flame },
                   { id: "ongoing", label: "Ongoing", icon: Tv },
                   { id: "movies", label: "Movie", icon: Film },
-                  { id: "schedule", label: "Schedule", icon: Calendar },
                 ].map((item) => {
                   const Icon = item.icon;
                   return (
@@ -391,16 +427,18 @@ export default function App() {
                       key={item.id}
                       onClick={() => {
                         setCategoryMenu(item.id);
-                        resetState();
+                        setSelectedGenre(null);
+                        setActiveDetail(null);
+                        setActiveEpisode(null);
                         setIsMenuOpen(false);
                       }}
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all ${
                         categoryMenu === item.id
-                          ? "bg-purple-600/30 text-purple-300 border border-purple-500/30"
-                          : "hover:bg-white/5 text-slate-300"
+                          ? "bg-white text-black font-semibold"
+                          : "hover:bg-neutral-800 text-neutral-300"
                       }`}
                     >
-                      <Icon className="w-4 h-4 text-purple-400" />
+                      <Icon className="w-4 h-4" />
                       <span>{item.label}</span>
                     </button>
                   );
@@ -411,10 +449,18 @@ export default function App() {
                     setIsInfoModalOpen(true);
                     setIsMenuOpen(false);
                   }}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-white/5 transition-all border-t border-liquid-border/50 mt-1"
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-neutral-300 hover:bg-neutral-800 transition-all border-t border-neutral-800 mt-1"
                 >
-                  <Info className="w-4 h-4 text-purple-400" />
+                  <Info className="w-4 h-4" />
                   <span>Info</span>
+                </button>
+
+                <button
+                  onClick={() => logoutUser()}
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-red-400 hover:bg-red-500/10 transition-all border-t border-neutral-800 mt-1"
+                >
+                  <LogOut className="w-4 h-4 text-red-400" />
+                  <span>Logout</span>
                 </button>
               </motion.div>
             )}
@@ -422,33 +468,108 @@ export default function App() {
         </div>
       </header>
 
-      {/* Info Modal */}
+      {/* Profile Modal */}
       <AnimatePresence>
-        {isInfoModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        {isProfileOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-liquid-card border border-liquid-border p-6 rounded-2xl max-w-sm w-full relative shadow-2xl backdrop-blur-xl text-center space-y-4"
+              className="bg-neutral-900 border border-neutral-800 p-6 rounded-2xl max-w-sm w-full relative shadow-2xl text-center space-y-4"
             >
               <button
-                onClick={() => setIsInfoModalOpen(false)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+                onClick={() => setIsProfileOpen(false)}
+                className="absolute top-4 right-4 text-neutral-400 hover:text-white transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
 
-              <div className="w-16 h-16 mx-auto rounded-full overflow-hidden border-2 border-purple-500/50 shadow-lg shadow-purple-500/30">
+              <h3 className="text-lg font-bold text-white text-left">Edit Profil User</h3>
+
+              {/* Upload Foto Profil User dari Galeri */}
+              <div className="flex flex-col items-center gap-2">
+                <div className="relative group w-20 h-20 rounded-full overflow-hidden border-2 border-neutral-700">
+                  <img
+                    src={profile.photo}
+                    alt="User Profile"
+                    className="w-full h-full object-cover"
+                  />
+                  <label htmlFor="photo-upload" className="absolute inset-0 bg-black/50 flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Camera className="w-6 h-6 text-white" />
+                  </label>
+                </div>
+                <input
+                  id="photo-upload"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                />
+                <label htmlFor="photo-upload" className="text-xs text-neutral-400 cursor-pointer hover:text-white underline">
+                  Ganti Foto Profil dari Galeri
+                </label>
+              </div>
+
+              <div className="space-y-3 text-left">
+                <div>
+                  <label className="text-xs text-neutral-400">Nama</label>
+                  <input
+                    type="text"
+                    value={profile.name}
+                    onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+                    className="w-full bg-black border border-neutral-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-white mt-1"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-neutral-400">Bio</label>
+                  <textarea
+                    value={profile.bio}
+                    onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
+                    className="w-full bg-black border border-neutral-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-white mt-1 h-20"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsProfileOpen(false)}
+                className="w-full py-2.5 bg-white text-black font-bold rounded-lg text-xs hover:bg-neutral-200 transition-all flex items-center justify-center gap-2"
+              >
+                <Save className="w-4 h-4" />
+                <span>Simpan Perubahan</span>
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Info Modal */}
+      <AnimatePresence>
+        {isInfoModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="bg-neutral-900 border border-neutral-800 p-6 rounded-2xl max-w-sm w-full relative shadow-2xl backdrop-blur-xl text-center space-y-4"
+            >
+              <button
+                onClick={() => setIsInfoModalOpen(false)}
+                className="absolute top-4 right-4 text-neutral-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="w-16 h-16 mx-auto rounded-full overflow-hidden border border-neutral-700 shadow-lg">
                 <img 
-                  src="https://files.catbox.moe/zh57ll.jpg" 
+                  src={LOGO_WEB} 
                   alt="Developer Logo" 
                   className="w-full h-full object-cover"
                 />
               </div>
 
               <div className="space-y-1">
-                <p className="text-xs text-purple-400 uppercase tracking-widest font-semibold">Developer</p>
+                <p className="text-xs text-neutral-400 uppercase tracking-widest font-semibold">Developer</p>
                 <h3 className="text-xl font-bold text-white">Xynn</h3>
               </div>
 
@@ -456,17 +577,17 @@ export default function App() {
                 href="https://whatsapp.com/channel/0029Vb8yMdiIt5rnDLcmnX1z"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-4 py-2 bg-green-600/30 border border-green-500/40 text-green-300 rounded-full text-xs font-medium hover:bg-green-600/40 transition-all"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-700 text-white rounded-full text-xs font-medium hover:bg-neutral-700 transition-all"
               >
                 <MessageSquare className="w-4 h-4" />
                 <span>Channel WhatsApp</span>
               </a>
 
-              <p className="text-xs text-slate-400 leading-relaxed px-2">
+              <p className="text-xs text-neutral-400 leading-relaxed px-2">
                 Website ini dibuat menggunakan bahasa pemrograman <strong>React.js</strong> dan <strong>Tailwind</strong> dan juga menggunakan API dari <strong>Sanka Vollerei</strong>.
               </p>
 
-              <div className="pt-2 border-t border-liquid-border text-[11px] text-slate-500 font-medium">
+              <div className="pt-2 border-t border-neutral-800 text-[11px] text-neutral-500 font-medium">
                 © LIQUID STREAM 2026
               </div>
             </motion.div>
@@ -474,10 +595,10 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Hero Section Carousel */}
+      {/* Hero Carousel */}
       {!activeDetail && !activeEpisode && heroAnimeList.length > 0 && activeTab === "home" && !categoryMenu && !selectedGenre && (
         <section className="max-w-7xl mx-auto px-6 pt-6">
-          <div className="relative w-full h-64 sm:h-80 md:h-96 rounded-2xl overflow-hidden border border-liquid-border group">
+          <div className="relative w-full h-64 sm:h-80 md:h-96 rounded-2xl overflow-hidden border border-neutral-800 group">
             <AnimatePresence mode="wait">
               {heroAnimeList[heroIndex] && (
                 <motion.div
@@ -494,9 +615,9 @@ export default function App() {
                     alt="Hero Poster"
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-liquid-bg via-liquid-bg/40 to-transparent" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
                   <div className="absolute bottom-6 left-6 right-6 space-y-2">
-                    <span className="px-3 py-1 bg-purple-600/80 backdrop-blur-md rounded-full text-xs font-semibold text-white inline-block">
+                    <span className="px-3 py-1 bg-white text-black font-bold rounded-full text-xs inline-block">
                       Featured Series
                     </span>
                     <h2 className="text-xl sm:text-3xl font-bold text-white line-clamp-1">
@@ -513,7 +634,7 @@ export default function App() {
                   key={idx}
                   onClick={() => setHeroIndex(idx)}
                   className={`h-2 rounded-full transition-all ${
-                    idx === heroIndex ? "w-6 bg-purple-400" : "w-2 bg-white/40"
+                    idx === heroIndex ? "w-6 bg-white" : "w-2 bg-neutral-600"
                   }`}
                 />
               ))}
@@ -526,29 +647,22 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-6 py-6">
         {loading ? (
           <div className="flex flex-col items-center justify-center min-h-[40vh]">
-            <Loader2 className="w-10 h-10 text-purple-500 animate-spin" />
-            <p className="mt-4 text-sm text-slate-400">Memuat konten liquid...</p>
+            <Loader2 className="w-10 h-10 text-white animate-spin" />
+            <p className="mt-4 text-sm text-neutral-400">Memuat konten...</p>
           </div>
         ) : activeEpisode ? (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
             <button
-              onClick={() => {
-                const animeSlug = extractSlug(activeDetail) || extractSlug(activeEpisode);
-                if (animeSlug) {
-                  fetchDetailData(animeSlug);
-                } else {
-                  resetState();
-                }
-              }}
-              className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300"
+              onClick={() => setActiveEpisode(null)}
+              className="flex items-center gap-2 text-sm text-neutral-300 hover:text-white"
             >
               <ArrowLeft className="w-4 h-4" /> Kembali ke Detail
             </button>
-            <div className="bg-liquid-card border border-liquid-border rounded-2xl p-4 backdrop-blur-md">
+            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4">
               <h1 className="text-xl font-semibold mb-4">
                 {extractString(activeEpisode, ["title", "name"]) || "Streaming Episode"}
               </h1>
-              <div className="aspect-video w-full rounded-xl overflow-hidden bg-black/50 border border-liquid-border">
+              <div className="aspect-video w-full rounded-xl overflow-hidden bg-black border border-neutral-800">
                 {extractStreamUrl(activeEpisode) ? (
                   <iframe
                     src={extractStreamUrl(activeEpisode)}
@@ -557,8 +671,8 @@ export default function App() {
                     title="Video Player"
                   />
                 ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-slate-500 p-6">
-                    <PlayCircle className="w-12 h-12 mb-2 text-slate-600" />
+                  <div className="flex flex-col items-center justify-center h-full text-neutral-500 p-6">
+                    <PlayCircle className="w-12 h-12 mb-2 text-neutral-600" />
                     <p className="text-sm font-medium">Stream player tidak ditemukan dari server.</p>
                   </div>
                 )}
@@ -569,34 +683,34 @@ export default function App() {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
             <div className="flex items-center justify-between">
               <button
-                onClick={resetState}
-                className="flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300"
+                onClick={() => setActiveDetail(null)}
+                className="flex items-center gap-2 text-sm text-neutral-300 hover:text-white"
               >
                 <ArrowLeft className="w-4 h-4" /> Kembali
               </button>
 
               <button
                 onClick={() => toggleSaveAnime(activeDetail)}
-                className={`p-2.5 rounded-full border border-liquid-border backdrop-blur-md transition-all ${
+                className={`p-2.5 rounded-full border border-neutral-800 transition-all ${
                   savedAnime.some((i) => extractSlug(i) === extractSlug(activeDetail))
-                    ? "bg-purple-600 text-white"
-                    : "bg-liquid-glass text-slate-300 hover:text-white"
+                    ? "bg-white text-black"
+                    : "bg-neutral-900 text-neutral-300 hover:text-white"
                 }`}
               >
                 <Bookmark className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 bg-liquid-card border border-liquid-border p-6 rounded-2xl backdrop-blur-md">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 bg-neutral-900 border border-neutral-800 p-6 rounded-2xl">
               <div className="space-y-4">
                 {extractImage(activeDetail) ? (
                   <img
                     src={extractImage(activeDetail)}
                     alt="Poster"
-                    className="w-full rounded-xl object-cover border border-liquid-border shadow-2xl"
+                    className="w-full rounded-xl object-cover border border-neutral-800 shadow-2xl"
                   />
                 ) : (
-                  <div className="w-full aspect-[3/4] bg-slate-800/50 rounded-xl border border-liquid-border flex flex-col items-center justify-center text-slate-500">
+                  <div className="w-full aspect-[3/4] bg-neutral-800 rounded-xl border border-neutral-800 flex flex-col items-center justify-center text-neutral-500">
                     <ImageOff className="w-10 h-10 mb-2" />
                     <span className="text-xs">No Poster</span>
                   </div>
@@ -606,19 +720,19 @@ export default function App() {
                 <h1 className="text-3xl font-bold text-white">
                   {extractString(activeDetail, ["title", "name"])}
                 </h1>
-                <p className="text-slate-300 text-sm leading-relaxed">
+                <p className="text-neutral-300 text-sm leading-relaxed">
                   {extractString(activeDetail, ["synopsis", "desc", "description"]) || "Tidak ada sinopsis."}
                 </p>
 
-                <h3 className="text-lg font-semibold pt-4 border-t border-liquid-border">Daftar Episode</h3>
+                <h3 className="text-lg font-semibold pt-4 border-t border-neutral-800">Daftar Episode</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-60 overflow-y-auto pr-2">
                   {findArrayInObject(activeDetail).map((ep, idx) => (
                     <button
                       key={idx}
                       onClick={() => handleSelectEpisode(ep)}
-                      className="p-2.5 text-xs text-left bg-liquid-glass hover:bg-purple-600/20 border border-liquid-border rounded-lg transition-all truncate flex items-center gap-2"
+                      className="p-2.5 text-xs text-left bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded-lg transition-all truncate flex items-center gap-2 text-neutral-200"
                     >
-                      <PlayCircle className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
+                      <PlayCircle className="w-3.5 h-3.5 text-white flex-shrink-0" />
                       <span className="truncate">
                         {extractString(ep, ["title", "name", "episode"]) || `Episode ${idx + 1}`}
                       </span>
@@ -637,63 +751,52 @@ export default function App() {
                   placeholder="Cari anime..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-liquid-glass border border-liquid-border rounded-full py-2.5 pl-11 pr-4 text-sm backdrop-blur-md focus:outline-none focus:border-purple-500/50 text-white placeholder-slate-400"
+                  className="w-full bg-neutral-900 border border-neutral-800 rounded-full py-2.5 pl-11 pr-4 text-sm focus:outline-none focus:border-neutral-500 text-white placeholder-neutral-500"
                 />
-                <Search className="absolute left-4 top-3 text-slate-400 w-4 h-4" />
+                <Search className="absolute left-4 top-3 text-neutral-500 w-4 h-4" />
               </form>
             )}
 
-            {/* List Pilihan Genre */}
             {activeTab === "genre" && !selectedGenre && (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-8">
                 {genresList.map((g, idx) => (
                   <div
                     key={idx}
                     onClick={() => handleSelectGenre(g)}
-                    className="p-4 rounded-xl bg-liquid-card border border-liquid-border backdrop-blur-md hover:border-purple-500/50 hover:bg-purple-600/10 transition-all text-center cursor-pointer font-medium text-sm text-purple-300"
+                    className="p-4 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-white transition-all text-center cursor-pointer font-medium text-sm text-neutral-200 hover:scale-105"
                   >
-                    {extractString(g, ["name", "title", "genre"])}
+                    {extractString(g, ["name", "title", "genre", "genre_name"]) || "Genre"}
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Header saat Genre / Menu aktif */}
-            {selectedGenre && (
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-lg font-semibold text-purple-300">
-                  Genre: {extractString(selectedGenre, ["name", "title", "genre"])}
-                </h2>
+            {activeTab === "genre" && selectedGenre && (
+              <div className="mb-6 flex items-center gap-3">
                 <button
                   onClick={() => setSelectedGenre(null)}
-                  className="text-xs text-slate-400 hover:text-white border border-liquid-border px-3 py-1 rounded-full"
+                  className="p-2 rounded-full bg-neutral-900 border border-neutral-800 hover:bg-neutral-800"
                 >
-                  Ganti Genre
+                  <ArrowLeft className="w-4 h-4" />
                 </button>
-              </div>
-            )}
-
-            {categoryMenu === "schedule" && (
-              <div className="mb-6">
-                <h2 className="text-lg font-semibold text-purple-300">Jadwal Rilis Anime (Schedule)</h2>
+                <h2 className="text-lg font-semibold text-white">Genre: {selectedGenre}</h2>
               </div>
             )}
 
             {activeTab === "save" && (
               <div className="mb-6">
-                <h2 className="text-lg font-semibold mb-4 text-purple-300">Anime Disimpan</h2>
-                {savedAnime.length === 0 && <p className="text-sm text-slate-500">Belum ada anime yang disimpan.</p>}
+                <h2 className="text-lg font-semibold mb-4 text-white">Anime Disimpan</h2>
+                {savedAnime.length === 0 && <p className="text-sm text-neutral-500">Belum ada anime yang disimpan.</p>}
               </div>
             )}
 
             {activeTab === "history" && (
               <div className="mb-6">
-                <h2 className="text-lg font-semibold mb-4 text-purple-300">Riwayat Tontonan</h2>
-                {historyAnime.length === 0 && <p className="text-sm text-slate-500">Belum ada riwayat tontonan.</p>}
+                <h2 className="text-lg font-semibold mb-4 text-white">Riwayat Tontonan</h2>
+                {historyAnime.length === 0 && <p className="text-sm text-neutral-500">Belum ada riwayat tontonan.</p>}
               </div>
             )}
 
-            {/* Render List Card Anime */}
             {(activeTab !== "genre" || selectedGenre) && (
               <motion.div 
                 initial={{ opacity: 0 }} 
@@ -703,7 +806,7 @@ export default function App() {
                 {(activeTab === "save" ? savedAnime : activeTab === "history" ? historyAnime : animeList).map((item, index) => {
                   const imageSrc = extractImage(item);
                   const titleText = extractString(item, ["title", "name"]) || "Untitled";
-                  const subText = extractString(item, ["episode", "status", "type", "day", "time"]);
+                  const subText = extractString(item, ["episode", "status", "type"]);
 
                   return (
                     <motion.div
@@ -711,9 +814,9 @@ export default function App() {
                       whileHover={{ y: -8, scale: 1.02 }}
                       transition={{ duration: 0.2 }}
                       onClick={() => handleSelectAnime(item)}
-                      className="cursor-pointer group relative bg-liquid-card border border-liquid-border rounded-2xl overflow-hidden backdrop-blur-md flex flex-col justify-between"
+                      className="cursor-pointer group relative bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col justify-between"
                     >
-                      <div className="aspect-[3/4] overflow-hidden relative bg-slate-800/50 flex items-center justify-center">
+                      <div className="aspect-[3/4] overflow-hidden relative bg-neutral-800 flex items-center justify-center">
                         {imageSrc ? (
                           <img
                             src={imageSrc}
@@ -721,15 +824,15 @@ export default function App() {
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                           />
                         ) : (
-                          <ImageOff className="w-8 h-8 text-slate-600" />
+                          <ImageOff className="w-8 h-8 text-neutral-600" />
                         )}
-                        <div className="absolute inset-0 bg-gradient-to-t from-liquid-bg via-transparent to-transparent opacity-80 pointer-events-none" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-80 pointer-events-none" />
                       </div>
                       <div className="p-4 relative z-10">
-                        <h2 className="font-semibold text-sm line-clamp-2 group-hover:text-purple-400 transition-colors">
+                        <h2 className="font-semibold text-sm line-clamp-2 text-neutral-200 group-hover:text-white transition-colors">
                           {titleText}
                         </h2>
-                        {subText && <p className="text-xs text-slate-500 mt-1">{subText}</p>}
+                        {subText && <p className="text-xs text-neutral-500 mt-1">{subText}</p>}
                       </div>
                     </motion.div>
                   );
@@ -741,7 +844,7 @@ export default function App() {
       </main>
 
       {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 backdrop-blur-liquid bg-liquid-bg/80 border-t border-liquid-border px-4 py-2 flex justify-around items-center max-w-md mx-auto sm:rounded-t-2xl">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 backdrop-blur-md bg-black/80 border-t border-neutral-800 px-4 py-2 flex justify-around items-center max-w-md mx-auto sm:rounded-t-2xl">
         {[
           { id: "home", label: "Home", icon: Home },
           { id: "search", label: "Search", icon: Search },
@@ -757,10 +860,12 @@ export default function App() {
               onClick={() => {
                 setActiveTab(tab.id);
                 setCategoryMenu("");
-                resetState();
+                setSelectedGenre(null);
+                setActiveDetail(null);
+                setActiveEpisode(null);
               }}
               className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all ${
-                isActive ? "text-purple-400 scale-110" : "text-slate-400 hover:text-slate-200"
+                isActive ? "text-white scale-110" : "text-neutral-500 hover:text-neutral-300"
               }`}
             >
               <Icon className="w-5 h-5" />
