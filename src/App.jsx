@@ -14,6 +14,7 @@ import {
   Flame,
   Tv,
   Film,
+  Calendar,
   Info,
   X,
   MessageSquare
@@ -28,6 +29,7 @@ import {
   getAnimeDetail,
   getEpisodeDetail,
 } from "./api/anime";
+import axios from "axios";
 
 // --- Helpers Rekursif ---
 const findArrayInObject = (obj) => {
@@ -35,7 +37,7 @@ const findArrayInObject = (obj) => {
   if (Array.isArray(obj)) return obj;
   if (typeof obj !== "object") return [];
 
-  const priorityKeys = ["data", "result", "anime", "items", "list", "episodes", "episode_list", "genres"];
+  const priorityKeys = ["data", "result", "anime", "items", "list", "episodes", "episode_list", "genres", "schedule"];
   for (const key of priorityKeys) {
     if (Array.isArray(obj[key]) && obj[key].length > 0) return obj[key];
   }
@@ -97,7 +99,7 @@ const extractSlug = (item) => {
   if (!raw) return "";
   return raw
     .replace(/^https?:\/\/[^\/]+/, "")
-    .replace(/^\/anime\/animasu\/(detail|episode)\//, "")
+    .replace(/^\/anime\/animasu\/(detail|episode|genre)\//, "")
     .replace(/^\/|\/$/g, "");
 };
 
@@ -145,6 +147,7 @@ const LiquidStreamTitle = () => {
 export default function App() {
   const [activeTab, setActiveTab] = useState("home");
   const [categoryMenu, setCategoryMenu] = useState("");
+  const [selectedGenre, setSelectedGenre] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
 
@@ -164,7 +167,7 @@ export default function App() {
   useEffect(() => localStorage.setItem("savedAnime", JSON.stringify(savedAnime)), [savedAnime]);
   useEffect(() => localStorage.setItem("historyAnime", JSON.stringify(historyAnime)), [historyAnime]);
 
-  // Cek Hash URL saat pertama kali muat / refresh (Agar tidak blank jika di-refresh)
+  // Cek Hash URL saat pertama kali muat / refresh
   useEffect(() => {
     const handleHashChange = async () => {
       const hash = window.location.hash;
@@ -195,8 +198,9 @@ export default function App() {
     return () => clearInterval(interval);
   }, [heroAnimeList]);
 
+  // Handle Fetch Data Utama
   useEffect(() => {
-    if (activeDetail || activeEpisode) return;
+    if (activeDetail || activeEpisode || selectedGenre) return;
 
     const fetchData = async () => {
       setLoading(true);
@@ -207,6 +211,9 @@ export default function App() {
             case "popular": res = await getPopularAnime(); break;
             case "ongoing": res = await getOngoingAnime(); break;
             case "movies": res = await getMoviesAnime(); break;
+            case "schedule": 
+              res = await axios.get("https://www.sankavollerei.web.id/anime/animasu/schedule");
+              break;
             default: break;
           }
         } else if (activeTab === "home") {
@@ -229,7 +236,27 @@ export default function App() {
     };
 
     fetchData();
-  }, [activeTab, categoryMenu, activeDetail, activeEpisode]);
+  }, [activeTab, categoryMenu, activeDetail, activeEpisode, selectedGenre]);
+
+  // Fetch Anime berdasarkan Genre yang Dipilih
+  const handleSelectGenre = async (genreItem) => {
+    const slug = extractSlug(genreItem) || genreItem.name || genreItem.title;
+    if (!slug) return;
+
+    setLoading(true);
+    setSelectedGenre(genreItem);
+    try {
+      const res = await axios.get(`https://www.sankavollerei.web.id/anime/animasu/genre/${slug.toLowerCase()}?page=1`);
+      if (res && res.data) {
+        setAnimeList(findArrayInObject(res.data));
+      }
+    } catch (err) {
+      console.error("Genre Error:", err);
+      alert("Gagal memuat anime berdasarkan genre ini.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -237,6 +264,7 @@ export default function App() {
     setLoading(true);
     setActiveDetail(null);
     setActiveEpisode(null);
+    setSelectedGenre(null);
     window.location.hash = "";
     try {
       const res = await searchAnime(searchQuery);
@@ -301,6 +329,7 @@ export default function App() {
   const resetState = () => {
     setActiveDetail(null);
     setActiveEpisode(null);
+    setSelectedGenre(null);
     window.location.hash = "";
   };
 
@@ -354,6 +383,7 @@ export default function App() {
                   { id: "popular", label: "Popular", icon: Flame },
                   { id: "ongoing", label: "Ongoing", icon: Tv },
                   { id: "movies", label: "Movie", icon: Film },
+                  { id: "schedule", label: "Schedule", icon: Calendar },
                 ].map((item) => {
                   const Icon = item.icon;
                   return (
@@ -433,7 +463,7 @@ export default function App() {
               </a>
 
               <p className="text-xs text-slate-400 leading-relaxed px-2">
-                Website ini di buat menggunakan bahasa pemrograman <strong>React.js</strong> dan <strong>Tailwind</strong> dan juga menggunakan api dari <strong>Sanka Vollerei</strong>
+                Website ini dibuat menggunakan bahasa pemrograman <strong>React.js</strong> dan <strong>Tailwind</strong> dan juga menggunakan API dari <strong>Sanka Vollerei</strong>.
               </p>
 
               <div className="pt-2 border-t border-liquid-border text-[11px] text-slate-500 font-medium">
@@ -445,7 +475,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Hero Section Carousel */}
-      {!activeDetail && !activeEpisode && heroAnimeList.length > 0 && activeTab === "home" && !categoryMenu && (
+      {!activeDetail && !activeEpisode && heroAnimeList.length > 0 && activeTab === "home" && !categoryMenu && !selectedGenre && (
         <section className="max-w-7xl mx-auto px-6 pt-6">
           <div className="relative w-full h-64 sm:h-80 md:h-96 rounded-2xl overflow-hidden border border-liquid-border group">
             <AnimatePresence mode="wait">
@@ -613,16 +643,39 @@ export default function App() {
               </form>
             )}
 
-            {activeTab === "genre" && (
+            {/* List Pilihan Genre */}
+            {activeTab === "genre" && !selectedGenre && (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-8">
                 {genresList.map((g, idx) => (
                   <div
                     key={idx}
-                    className="p-4 rounded-xl bg-liquid-card border border-liquid-border backdrop-blur-md hover:border-purple-500/50 transition-all text-center cursor-pointer font-medium text-sm text-purple-300"
+                    onClick={() => handleSelectGenre(g)}
+                    className="p-4 rounded-xl bg-liquid-card border border-liquid-border backdrop-blur-md hover:border-purple-500/50 hover:bg-purple-600/10 transition-all text-center cursor-pointer font-medium text-sm text-purple-300"
                   >
                     {extractString(g, ["name", "title", "genre"])}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Header saat Genre / Menu aktif */}
+            {selectedGenre && (
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-lg font-semibold text-purple-300">
+                  Genre: {extractString(selectedGenre, ["name", "title", "genre"])}
+                </h2>
+                <button
+                  onClick={() => setSelectedGenre(null)}
+                  className="text-xs text-slate-400 hover:text-white border border-liquid-border px-3 py-1 rounded-full"
+                >
+                  Ganti Genre
+                </button>
+              </div>
+            )}
+
+            {categoryMenu === "schedule" && (
+              <div className="mb-6">
+                <h2 className="text-lg font-semibold text-purple-300">Jadwal Rilis Anime (Schedule)</h2>
               </div>
             )}
 
@@ -640,46 +693,49 @@ export default function App() {
               </div>
             )}
 
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6"
-            >
-              {(activeTab === "save" ? savedAnime : activeTab === "history" ? historyAnime : animeList).map((item, index) => {
-                const imageSrc = extractImage(item);
-                const titleText = extractString(item, ["title", "name"]) || "Untitled";
-                const subText = extractString(item, ["episode", "status", "type"]);
+            {/* Render List Card Anime */}
+            {(activeTab !== "genre" || selectedGenre) && (
+              <motion.div 
+                initial={{ opacity: 0 }} 
+                animate={{ opacity: 1 }} 
+                className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6"
+              >
+                {(activeTab === "save" ? savedAnime : activeTab === "history" ? historyAnime : animeList).map((item, index) => {
+                  const imageSrc = extractImage(item);
+                  const titleText = extractString(item, ["title", "name"]) || "Untitled";
+                  const subText = extractString(item, ["episode", "status", "type", "day", "time"]);
 
-                return (
-                  <motion.div
-                    key={index}
-                    whileHover={{ y: -8, scale: 1.02 }}
-                    transition={{ duration: 0.2 }}
-                    onClick={() => handleSelectAnime(item)}
-                    className="cursor-pointer group relative bg-liquid-card border border-liquid-border rounded-2xl overflow-hidden backdrop-blur-md flex flex-col justify-between"
-                  >
-                    <div className="aspect-[3/4] overflow-hidden relative bg-slate-800/50 flex items-center justify-center">
-                      {imageSrc ? (
-                        <img
-                          src={imageSrc}
-                          alt={titleText}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        />
-                      ) : (
-                        <ImageOff className="w-8 h-8 text-slate-600" />
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-liquid-bg via-transparent to-transparent opacity-80 pointer-events-none" />
-                    </div>
-                    <div className="p-4 relative z-10">
-                      <h2 className="font-semibold text-sm line-clamp-2 group-hover:text-purple-400 transition-colors">
-                        {titleText}
-                      </h2>
-                      {subText && <p className="text-xs text-slate-500 mt-1">{subText}</p>}
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </motion.div>
+                  return (
+                    <motion.div
+                      key={index}
+                      whileHover={{ y: -8, scale: 1.02 }}
+                      transition={{ duration: 0.2 }}
+                      onClick={() => handleSelectAnime(item)}
+                      className="cursor-pointer group relative bg-liquid-card border border-liquid-border rounded-2xl overflow-hidden backdrop-blur-md flex flex-col justify-between"
+                    >
+                      <div className="aspect-[3/4] overflow-hidden relative bg-slate-800/50 flex items-center justify-center">
+                        {imageSrc ? (
+                          <img
+                            src={imageSrc}
+                            alt={titleText}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          />
+                        ) : (
+                          <ImageOff className="w-8 h-8 text-slate-600" />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-liquid-bg via-transparent to-transparent opacity-80 pointer-events-none" />
+                      </div>
+                      <div className="p-4 relative z-10">
+                        <h2 className="font-semibold text-sm line-clamp-2 group-hover:text-purple-400 transition-colors">
+                          {titleText}
+                        </h2>
+                        {subText && <p className="text-xs text-slate-500 mt-1">{subText}</p>}
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </motion.div>
+            )}
           </>
         )}
       </main>
